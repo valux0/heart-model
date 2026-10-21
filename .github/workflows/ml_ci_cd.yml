@@ -1,0 +1,61 @@
+name: ML diamonds-model CI/CD
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  repository_dispatch:
+    types: [ ml_ci_cd ]
+
+jobs:
+  ml_ci_cd:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'
+
+      - name: Show Python version
+        run: python --version
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Download dataset
+        run: |
+          mkdir -p data
+          if [ -n "${{ github.event.client_payload.dataseturl }}" ]; then
+            echo "Descargando dataset desde: ${{ github.event.client_payload.dataseturl }}"
+            wget -O data/diamonds.csv "${{ github.event.client_payload.dataseturl }}"
+          fi
+
+      - name: Train model
+        run: python model/train.py
+
+      - name: Build Docker Image
+        run: |
+          TAG="${{ github.event.client_payload.sha }}"
+          if [ -z "$TAG" ]; then
+            TAG="${{ github.sha }}"
+          fi
+          docker build -t ${{ secrets.DOCKER_USER }}/${{ secrets.MODEL_NAME }}:$TAG .
+
+      - name: Docker Login
+        env:
+          DOCKER_USER: ${{ secrets.DOCKER_USER }}
+          DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+        run: |
+          echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USER" --password-stdin
+
+      - name: Docker Push
+        run: |
+          TAG="${{ github.event.client_payload.sha }}"
+          if [ -z "$TAG" ]; then
+            TAG="${{ github.sha }}"
+          fi
+          docker push ${{ secrets.DOCKER_USER }}/${{ secrets.MODEL_NAME }}:$TAG
